@@ -13,6 +13,14 @@ import {
 import { cancelSolve, fetchNode, startSolve, stopSolve } from './solverClient';
 import { parseHandHistory, type ImportedHand, type LineAction } from './handHistory';
 import { matchAction } from './replay';
+import {
+  loadPreflop,
+  reviewPreflop,
+  spotFromSolution,
+  type PreflopReview,
+  type PreflopSolution,
+  type RakeVariant,
+} from './preflop';
 import type { NodeData, SolveParams } from './solverTypes';
 
 export type Street = 'flop' | 'turn' | 'river';
@@ -87,6 +95,10 @@ interface AnalyzerStore {
   stackOverride: number | null;
   /** The pasted hand, when the analysis came from a hand history. */
   imported: ImportedHand | null;
+  /** Which preflop solution to use. */
+  rake: RakeVariant;
+  /** Loaded preflop solution (null while loading or if it failed). */
+  preflop: PreflopSolution | null;
 
   // ---- solve / review (not persisted) ----
   status: 'setup' | 'solving' | 'review' | 'error';
@@ -94,13 +106,16 @@ interface AnalyzerStore {
   progress: { iteration: number; exploitPct: number; elapsedMs: number; target: number } | null;
   solved: Solved | null;
   steps: Step[];
-  /** Which step is on screen. Stepping back doesn't throw away later steps. */
+  /** Which step is on screen (-1 = the preflop review). Stepping back keeps later steps. */
   cursor: number;
+  /** Grades for the preflop decisions of a pasted hand. */
+  preflopReview: PreflopReview | null;
   /** Why the automatic replay of an imported hand stopped early, if it did. */
   replayStop: string | null;
   busy: boolean;
 
   set: (patch: Partial<AnalyzerStore>) => void;
+  setRake: (rake: RakeVariant) => void;
   currentSpot: () => Spot | string;
   solve: () => void;
   /** Parse a pasted hand history, fill in the setup and start solving. Returns an error message. */
@@ -223,6 +238,8 @@ export const useAnalyzer = create<AnalyzerStore>()(
         potOverride: null,
         stackOverride: null,
         imported: null,
+        rake: 'rake',
+        preflop: null,
 
         status: 'setup',
         error: null,
@@ -230,15 +247,28 @@ export const useAnalyzer = create<AnalyzerStore>()(
         solved: null,
         steps: [],
         cursor: 0,
+        preflopReview: null,
         replayStop: null,
         busy: false,
 
         set: patch => set(patch),
 
+        setRake: rake => {
+          set({ rake });
+          loadPreflop(rake).then(sol => get().rake === rake && set({ preflop: sol }));
+        },
+
         currentSpot: () => {
-          const { heroPos, villainPos, potType, rangeOverride, potOverride, stackOverride } = get();
-          const spot = buildSpot({ heroPos, villainPos, potType });
-          if (typeof spot === 'string') return spot;
+          const { heroPos, villainPos, potType, rangeOverride, potOverride, stackOverride, preflop } = get();
+          let spot: Spot | string;
+          const solved = preflop ? spotFromSolution(preflop, heroPos, villainPos, potType) : 'still loading';
+          if (typeof solved !== 'string') {
+            spot = solved;
+          } else {
+            spot = buildSpot({ heroPos, villainPos, potType });
+            if (typeof spot === 'string') return spot;
+            spot = { ...spot, sourceNote: preflop ? solved : undefined };
+          }
           return {
             ...spot,
             ranges: [rangeOverride[0] ?? spot.ranges[0], rangeOverride[1] ?? spot.ranges[1]],
@@ -287,6 +317,7 @@ export const useAnalyzer = create<AnalyzerStore>()(
             steps: [],
             cursor: 0,
             replayStop: null,
+            preflopReview: imported ? get().preflopReview : null,
           });
 
           startSolve(params, async msg => {
@@ -319,9 +350,9 @@ export const useAnalyzer = create<AnalyzerStore>()(
                 await advance([], []);
                 if (imported && startStreet === 'flop') {
                   await replay(imported.line);
-                  // Open on the first decision you made.
+                  // Open on the first decision you made (preflop first, if it was graded).
                   const first = get().steps.findIndex(st => st.decision);
-                  set({ cursor: first >= 0 ? first : 0 });
+                  set({ cursor: get().preflopReview?.decisions.length ? -1 : first >= 0 ? first : 0 });
                 }
                 set({ status: 'review' });
               } catch (e) {
@@ -334,7 +365,17 @@ export const useAnalyzer = create<AnalyzerStore>()(
         importHand: text => {
           const hand = parseHandHistory(text);
           if (typeof hand === 'string') return hand;
+          const { preflop } = get();
+          const preflopReview = preflop ? reviewPreflop(preflop, hand.preflop, hand.heroCards) : null;
+          if (hand.preflopOnly) {
+            if (!preflopReview?.decisions.length) {
+              return `${hand.preflopOnly} ${preflopReview?.stop ?? 'There were no decisions of yours to grade.'}`;
+            }
+            set({ imported: hand, preflopReview, heroPos: hand.heroPos, heroCards: hand.heroCards, solved: null, steps: [], cursor: -1, status: 'review', error: null });
+            return null;
+          }
           set({
+            preflopReview,
             imported: hand,
             heroPos: hand.heroPos,
             villainPos: hand.villainPos,
@@ -372,7 +413,10 @@ export const useAnalyzer = create<AnalyzerStore>()(
           }
         },
 
-        setCursor: idx => set({ cursor: Math.max(0, Math.min(idx, get().steps.length - 1)) }),
+        setCursor: idx => {
+          const min = get().preflopReview?.decisions.length ? -1 : 0;
+          set({ cursor: Math.max(min, Math.min(idx, get().steps.length - 1)) });
+        },
       };
     },
     {
@@ -389,7 +433,13 @@ export const useAnalyzer = create<AnalyzerStore>()(
         potOverride: s.potOverride,
         stackOverride: s.stackOverride,
         imported: s.imported,
+        rake: s.rake,
       }),
     },
   ),
 );
+
+// Load the preflop solution as soon as the app starts (and again after a reload restores `rake`).
+const loadInitial = () => useAnalyzer.getState().setRake(useAnalyzer.getState().rake);
+if (useAnalyzer.persist.hasHydrated()) loadInitial();
+else useAnalyzer.persist.onFinishHydration(loadInitial);

@@ -7,6 +7,8 @@
 use postflop_solver::*;
 use wasm_bindgen::prelude::*;
 
+pub mod preflop;
+
 #[cfg(feature = "mt")]
 pub use wasm_bindgen_rayon::init_thread_pool;
 

@@ -102,9 +102,12 @@ export function heroView(
     const n = weights.length;
     const evs = actions.map((_, a) => node.actionEvs![a * n + handIdx]);
     const best = Math.max(...evs);
+    const bestIdx = evs.indexOf(best);
     view.options = actions.map((action, a) => ({
       action,
-      freq: node.strategy![a * n + handIdx],
+      // A hand the solver never brings here has no meaningful mix (it's never trained), so
+      // recommend the highest-EV action outright.
+      freq: view.inRange ? node.strategy![a * n + handIdx] : a === bestIdx ? 1 : 0,
       evVsBest: evs[a] - best,
     }));
   }
@@ -116,10 +119,18 @@ export type Grade = 'best' | 'good' | 'ok' | 'mistake' | 'blunder';
 export interface Decision {
   grade: Grade;
   chosen: HeroOption;
+  /** Most frequent action in the solver's mix. */
   best: HeroOption;
+  /** Highest-EV action (usually the same as `best`). */
+  bestEv: HeroOption;
   /** Chips lost vs the best option. */
   loss: number;
   potAtDecision: number;
+  /**
+   * The solver mixes this action in but its EV is clearly worse — a sign the spot is rare and
+   * not fully converged. The EV comparison is the part to trust.
+   */
+  unsettled: boolean;
 }
 
 export function gradeDecision(options: HeroOption[], chosenIdx: number, pot: number): Decision {
@@ -127,13 +138,17 @@ export function gradeDecision(options: HeroOption[], chosenIdx: number, pot: num
   const best = options.reduce((a, b) => (b.freq > a.freq ? b : a));
   const loss = -chosen.evVsBest;
   const lossPct = loss / pot;
+  // EV decides first: losing a real chunk of the pot is a mistake even if the solver
+  // sometimes takes the action (in rare spots its mix can lag behind the EVs).
   let grade: Grade;
-  if (chosen === best || chosen.freq >= 0.5) grade = 'best';
+  if (lossPct >= 0.25) grade = 'blunder';
+  else if (lossPct >= 0.05) grade = 'mistake';
+  else if ((chosen === best || chosen.freq >= 0.5) && lossPct < 0.02) grade = 'best';
   else if (chosen.freq >= 0.15 || lossPct < 0.01) grade = 'good';
-  else if (chosen.freq >= 0.03 || lossPct < 0.05) grade = 'ok';
-  else if (lossPct < 0.25) grade = 'mistake';
-  else grade = 'blunder';
-  return { grade, chosen, best, loss, potAtDecision: pot };
+  else grade = 'ok';
+  const unsettled = chosen.freq >= 0.15 && lossPct >= 0.05;
+  const bestEv = options.reduce((a, b) => (b.evVsBest > a.evVsBest ? b : a));
+  return { grade, chosen, best, bestEv, loss, potAtDecision: pot, unsettled };
 }
 
 export const GRADE_TEXT: Record<Grade, { title: string; tone: string }> = {

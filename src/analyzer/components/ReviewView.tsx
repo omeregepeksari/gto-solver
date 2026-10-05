@@ -13,6 +13,7 @@ import {
 import { BUCKET, describeHand } from '../handStrength';
 import { cardLabel, gridPos } from '../cards';
 import { BB } from '../spots';
+import { chartAt, type PreflopDecision } from '../preflop';
 import { MiniCard } from './MiniCard';
 import { CardGrid } from './CardGrid';
 import { RangeGrid } from './RangeGrid';
@@ -36,7 +37,29 @@ export function ReviewView() {
     return () => window.removeEventListener('keydown', onKey);
   }, [setCursor]);
 
-  if (!solved || steps.length === 0) return null;
+  const preflopNav = (
+    <>
+      <HandSummary />
+      <div className="az-nav">
+        <button className="btn btn-secondary btn-sm" disabled={cursor <= -1 || (cursor === 0 && !useAnalyzer.getState().preflopReview?.decisions.length)} onClick={() => setCursor(cursor - 1)}>
+          ← Back
+        </button>
+        <Timeline steps={steps} cursor={cursor} hero={solved?.spot.hero ?? 0} villainName={villainPos} />
+        <button className="btn btn-secondary btn-sm" disabled={cursor >= steps.length - 1} onClick={() => setCursor(cursor + 1)}>
+          Next →
+        </button>
+      </div>
+    </>
+  );
+
+  if (cursor < 0 || !solved || steps.length === 0) {
+    return (
+      <div className="az-review">
+        {preflopNav}
+        <PreflopReviewPanel />
+      </div>
+    );
+  }
 
   const step = steps[Math.min(cursor, steps.length - 1)];
   const { node } = step;
@@ -50,20 +73,7 @@ export function ReviewView() {
 
   return (
     <div className="az-review">
-      <HandSummary />
-      <div className="az-nav">
-        <button className="btn btn-secondary btn-sm" disabled={cursor === 0} onClick={() => setCursor(cursor - 1)}>
-          ← Back
-        </button>
-        <Timeline steps={steps} cursor={cursor} hero={hero} villainName={villainPos} />
-        <button
-          className="btn btn-secondary btn-sm"
-          disabled={cursor >= steps.length - 1}
-          onClick={() => setCursor(cursor + 1)}
-        >
-          Next →
-        </button>
-      </div>
+      {preflopNav}
 
       <div className="az-review-grid">
         <div className="az-main">
@@ -113,8 +123,11 @@ export function ReviewView() {
 
 /** One-glance verdict for the whole hand, with a jump to the costliest decision. */
 function HandSummary() {
-  const { steps, setCursor, imported, replayStop } = useAnalyzer();
-  const decided = steps.map((s, i) => ({ d: s.decision, i })).filter((x): x is { d: Decision; i: number } => !!x.d);
+  const { steps, setCursor, imported, replayStop, preflopReview } = useAnalyzer();
+  const decided = [
+    ...(preflopReview?.decisions.map(p => ({ d: p.decision, i: -1 })) ?? []),
+    ...steps.map((s, i) => ({ d: s.decision, i })).filter((x): x is { d: Decision; i: number } => !!x.d),
+  ];
   if (decided.length === 0 && !imported) return null;
 
   const good = decided.filter(x => GRADE_TEXT[x.d.grade].tone === 'good').length;
@@ -122,7 +135,7 @@ function HandSummary() {
   const ok = decided.length - good - bad;
   const totalLoss = decided.reduce((a, x) => a + x.d.loss, 0);
   const worst = decided.reduce<(typeof decided)[number] | null>((w, x) => (!w || x.d.loss > w.d.loss ? x : w), null);
-  const worstStreet = worst ? STREET_NAME[steps[worst.i].node.board.length] : '';
+  const worstStreet = worst ? (worst.i < 0 ? 'Preflop' : STREET_NAME[steps[worst.i].node.board.length]) : '';
 
   let verdict: string;
   if (decided.length === 0) verdict = 'No decisions of yours to grade in this line.';
@@ -154,13 +167,19 @@ function HandSummary() {
       </div>
       {imported?.warnings.map(w => <p key={w} className="hs-warn">{w}</p>)}
       {replayStop && <p className="hs-warn">Replay stopped: {replayStop} You can continue by hand from there.</p>}
+      {imported?.preflopOnly && <p className="hs-warn">{imported.preflopOnly} Only preflop is reviewed.</p>}
     </div>
   );
 }
 
 function Timeline({ steps, cursor, hero, villainName }: { steps: Step[]; cursor: number; hero: number; villainName: string }) {
-  const setCursor = useAnalyzer(s => s.setCursor);
+  const { setCursor, preflopReview } = useAnalyzer();
   const items: { key: string; label: string; stepIdx: number; cls: string }[] = [];
+  if (preflopReview?.decisions.length) {
+    const tones = preflopReview.decisions.map(p => GRADE_TEXT[p.decision.grade].tone);
+    const tone = tones.includes('bad') ? 'bad' : tones.includes('ok') ? 'ok' : 'good';
+    items.push({ key: 'pre', label: 'Preflop', stepIdx: -1, cls: `tl-action tl-${tone}` });
+  }
   steps.forEach((s, i) => {
     if (i === 0) {
       items.push({ key: 'start', label: `${STREET_NAME[s.node.board.length]} ${s.node.board.map(cardLabel).join(' ')}`, stepIdx: 0, cls: 'tl-street' });
@@ -201,9 +220,14 @@ function DecisionFeedback({ d }: { d: Decision }) {
       </div>
       <div className="fb-body">
         {d.grade === 'best' && <>The solver does this {Math.round(d.chosen.freq * 100)}% of the time with your hand.</>}
+
         {d.grade !== 'best' && (
           <>
-            Solver: <b>{d.best.action.label}</b> ({Math.round(d.best.freq * 100)}%). You chose an action it takes{' '}
+            Solver: <b>{d.best.action.label}</b> ({Math.round(d.best.freq * 100)}%)
+            {d.bestEv !== d.best && d.bestEv.evVsBest - d.best.evVsBest >= NEGLIGIBLE && (
+              <>, best EV: <b>{d.bestEv.action.label}</b></>
+            )}
+            . You chose an action it takes{' '}
             {Math.round(d.chosen.freq * 100)}% of the time
             {d.loss >= NEGLIGIBLE ? (
               <>
@@ -213,6 +237,11 @@ function DecisionFeedback({ d }: { d: Decision }) {
               <> — nearly the same EV.</>
             )}
           </>
+        )}
+        {d.unsettled && (
+          <div className="fb-unsettled">
+            This line is rare, so the solver’s mix here isn’t fully settled — go by the EV numbers.
+          </div>
         )}
       </div>
     </div>
@@ -238,8 +267,14 @@ function HeroDecision({ step }: { step: Step }) {
 
   let summary: string;
   if (top.freq > 0.9) summary = `Clear spot: the solver almost always plays ${top.action.short.toLowerCase()}.`;
-  else if (second && second.freq > 0.25)
-    summary = `Mixed spot: ${top.action.short.toLowerCase()} ${Math.round(top.freq * 100)}% / ${second.action.short.toLowerCase()} ${Math.round(second.freq * 100)}%. Both are fine — the EVs are almost equal.`;
+  else if (second && second.freq > 0.25) {
+    const gap = Math.abs(top.evVsBest - second.evVsBest);
+    summary = `Mixed spot: ${top.action.short.toLowerCase()} ${Math.round(top.freq * 100)}% / ${second.action.short.toLowerCase()} ${Math.round(second.freq * 100)}%.`;
+    summary +=
+      gap < 0.02 * step.node.pot
+        ? ' Both are fine — the EVs are almost equal.'
+        : ` The EVs aren’t equal yet (rare spot), so lean towards the best-EV option.`;
+  }
   else summary = `Mostly ${top.action.short.toLowerCase()} (${Math.round(top.freq * 100)}%).`;
 
   return (
@@ -459,6 +494,81 @@ function RangePanel({ step, player }: { step: Step; player: number }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** Your preflop decisions from a pasted hand, each with the solver's chart for that spot. */
+function PreflopReviewPanel() {
+  const { preflopReview, preflop, heroCards } = useAnalyzer();
+  const [selected, setSelected] = useState(0);
+  if (!preflopReview || !preflop) return null;
+  const { decisions, stop } = preflopReview;
+  const current: PreflopDecision | undefined = decisions[Math.min(selected, decisions.length - 1)];
+  const chart = current ? chartAt(preflop, current.node) : null;
+  const colors = current ? actionColors(current.options.map(o => o.action)) : [];
+  const h1 = heroCards[0];
+  const h2 = heroCards[1];
+
+  return (
+    <div className="az-review-grid">
+      <div className="az-main">
+        {h1 !== null && h2 !== null && (
+          <div className="az-hero-hand az-hero-hand-flat">
+            <MiniCard card={h1} size="md" />
+            <MiniCard card={h2} size="md" />
+            <span>Your preflop decisions</span>
+          </div>
+        )}
+        {decisions.map((p, i) => (
+          <div
+            key={i}
+            className={`az-panel pf-decision${i === selected ? ' pf-decision-on' : ''}`}
+            onClick={() => setSelected(i)}
+          >
+            <DecisionFeedback d={p.decision} />
+            <div className="az-options">
+              {p.options.map((o, a) => (
+                <div key={o.action.code} className={`az-option${o === p.decision.chosen ? ' az-option-chosen' : ''}`}>
+                  <span className="az-dot" style={{ background: actionColors(p.options.map(x => x.action))[a] }} />
+                  <span className="az-option-name">
+                    {o.action.label}
+                    {o === p.decision.chosen && <em className="az-you">you</em>}
+                  </span>
+                  <span className="az-bar">
+                    <span style={{ width: `${o.freq * 100}%`, background: actionColors(p.options.map(x => x.action))[a] }} />
+                  </span>
+                  <span className="az-freq">{Math.round(o.freq * 100)}%</span>
+                  <span className={`az-ev ${o.evVsBest > -NEGLIGIBLE ? 'ev-best' : ''}`}>
+                    {o.evVsBest > -NEGLIGIBLE ? 'best EV' : `−${bb(-o.evVsBest)}`}
+                  </span>
+                  <span />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        {stop && <p className="az-note">Preflop grading stopped: {stop}</p>}
+      </div>
+      {chart && current && (
+        <aside className="az-side">
+          <h3 className="pf-side-title">Solver’s range in this spot</h3>
+          <RangeGrid
+            cells={chart.freqs.map(f => ({ weight: 1, maxCombos: 1, freqs: f }))}
+            colors={colors}
+            actionNames={chart.actions}
+            highlight={[Math.floor(current.hand / 13), current.hand % 13]}
+          />
+          <div className="az-legend">
+            {chart.actions.map((a, i) => (
+              <span key={a}>
+                <i style={{ background: colors[i] }} />
+                {a} {(chart.totals[i] * 100).toFixed(0)}%
+              </span>
+            ))}
+          </div>
+        </aside>
+      )}
     </div>
   );
 }

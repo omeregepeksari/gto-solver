@@ -31,6 +31,12 @@ export interface LineAction {
   text: string;
 }
 
+export interface PreflopAction {
+  pos: Position;
+  act: 'F' | 'C' | 'R' | 'A';
+  hero: boolean;
+}
+
 export interface ImportedHand {
   heroName: string;
   villainName: string;
@@ -43,6 +49,10 @@ export interface ImportedHand {
   pot: number;
   stack: number;
   line: LineAction[];
+  /** Every voluntary preflop action, in order (blinds excluded). */
+  preflop: PreflopAction[];
+  /** Set when there's nothing to solve postflop (why), so only preflop is reviewed. */
+  preflopOnly: string | null;
   /** e.g. "BTN opens 2.5bb, you call in the BB". */
   story: string;
   warnings: string[];
@@ -120,6 +130,7 @@ export function parseHandHistory(text: string): ImportedHand | string {
   let preflopRaises = 0;
   let lastPreflopRaiser = '';
   const preflopStory: { name: string; verb: 'calls' | 'raises'; total: number }[] = [];
+  const preflopActs: { name: string; act: PreflopAction['act'] }[] = [];
   const postflop: { street: number; name: string; kind: LineActionKind; to: number; allIn: boolean }[] = [];
 
   const add = (name: string, amount: number) => {
@@ -164,7 +175,10 @@ export function parseHandHistory(text: string): ImportedHand | string {
       continue;
     }
     if (verb === 'folds') {
-      if (street < 0) foldedPreflop.add(name);
+      if (street < 0) {
+        foldedPreflop.add(name);
+        preflopActs.push({ name, act: 'F' });
+      }
       else postflop.push({ street, name, kind: 'fold', to: 0, allIn: false });
       continue;
     }
@@ -174,7 +188,10 @@ export function parseHandHistory(text: string): ImportedHand | string {
     }
     if (verb === 'calls') {
       add(name, parseAmount(rest));
-      if (street < 0) preflopStory.push({ name, verb: 'calls', total: streetIn.get(name)! });
+      if (street < 0) {
+        preflopStory.push({ name, verb: 'calls', total: streetIn.get(name)! });
+        preflopActs.push({ name, act: 'C' });
+      }
       else postflop.push({ street, name, kind: 'call', to: streetIn.get(name)!, allIn });
       continue;
     }
@@ -191,6 +208,7 @@ export function parseHandHistory(text: string): ImportedHand | string {
       preflopRaises++;
       lastPreflopRaiser = name;
       preflopStory.push({ name, verb: 'raises', total });
+      preflopActs.push({ name, act: allIn ? 'A' : 'R' });
     } else {
       postflop.push({ street, name, kind: 'raise', to: total, allIn });
     }
@@ -198,19 +216,36 @@ export function parseHandHistory(text: string): ImportedHand | string {
 
   if (!(bigBlind > 0)) return 'Couldn’t find the big blind size.';
   if (!heroName || heroCards.length !== 2) return 'Couldn’t find your hole cards (the “Dealt to …” line).';
-  if (board.length < 3) return 'This hand ended before the flop — there’s nothing to analyze postflop.';
 
   // ---- who's in the pot ----
   const order = [...seats].sort((a, b) => a.seat - b.seat).map(s => s.name);
   const button = seats.find(s => String(s.seat) === buttonSeat)?.name;
   if (!button) return 'Couldn’t find the button seat.';
   const pos = positionsFor(order, button);
+  const preflop = preflopActs.map(a => ({ pos: pos.get(a.name)!, act: a.act, hero: a.name === heroName }));
+  const preflopOnlyHand = (reason: string): ImportedHand => ({
+    heroName,
+    villainName: '',
+    heroPos: pos.get(heroName)!,
+    villainPos: pos.get(heroName)!,
+    potType: 'srp',
+    heroCards: [heroCards[0], heroCards[1]],
+    board: [],
+    pot: 0,
+    stack: 0,
+    line: [],
+    preflop,
+    preflopOnly: reason,
+    story: '',
+    warnings: [],
+  });
+  if (board.length < 3) return preflopOnlyHand('The hand ended before the flop.');
 
   // In the pot at the flop: didn't fold preflop and either put chips in or acted postflop.
   const inPot = order.filter(
     n => !foldedPreflop.has(n) && ((preflopIn.get(n) ?? 0) > 0 || postflop.some(a => a.name === n)),
   );
-  if (!inPot.includes(heroName)) return 'You folded preflop — there’s nothing to analyze postflop.';
+  if (!inPot.includes(heroName)) return preflopOnlyHand('You folded preflop.');
   const others = inPot.filter(n => n !== heroName);
   if (others.length === 0) return 'Couldn’t find your opponent in this hand.';
 
@@ -223,8 +258,8 @@ export function parseHandHistory(text: string): ImportedHand | string {
     );
   }
 
-  let potType: PotType = preflopRaises >= 2 ? '3bet' : 'srp';
-  if (preflopRaises >= 3) warnings.push('This was a 4-bet pot; it’s analyzed with 3-bet pot ranges.');
+  let potType: PotType = preflopRaises >= 3 ? '4bet' : preflopRaises === 2 ? '3bet' : 'srp';
+  if (preflopRaises >= 4) warnings.push('This was a 5-bet pot; it’s analyzed with 4-bet pot ranges.');
   if (preflopRaises === 0) {
     potType = 'srp';
     warnings.push('This pot was limped; it’s analyzed with raised-pot ranges, so ranges are tighter than reality.');
@@ -275,6 +310,8 @@ export function parseHandHistory(text: string): ImportedHand | string {
     pot: Math.max(1, toChips(potAtFlop)),
     stack: Math.max(1, toChips(effective)),
     line,
+    preflop,
+    preflopOnly: null,
     story: preflopStory
       .filter(e => inPot.includes(e.name))
       .map(e => {

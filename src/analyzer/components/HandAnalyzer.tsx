@@ -2,30 +2,41 @@ import { useGameStore } from '../../store/gameStore';
 import { useAnalyzer } from '../analyzerStore';
 import { SetupPanel } from './SetupPanel';
 import { ReviewView } from './ReviewView';
+import { PreflopCharts } from './PreflopCharts';
+import { useState } from 'react';
 import '../analyzer.css';
 
 export function HandAnalyzer() {
   const setScreen = useGameStore(s => s.setScreen);
   const { status, solved, backToSetup } = useAnalyzer();
+  const [tab, setTab] = useState<'hands' | 'preflop'>('hands');
 
   return (
     <div className="analyzer">
       <header className="az-header">
         <button className="btn-back" onClick={() => setScreen('menu')}>☰ Menu</button>
         <h2>Hand Analyzer</h2>
-        {status === 'review' && solved && (
+        <div className="seg az-tabs">
+          <button className={tab === 'hands' ? 'on' : ''} onClick={() => setTab('hands')}>Hand review</button>
+          <button className={tab === 'preflop' ? 'on' : ''} onClick={() => setTab('preflop')}>Preflop charts</button>
+        </div>
+        <span className="spacer" />
+        {tab === 'hands' && status === 'review' && (
           <>
-            <span className="az-solve-info" title="Exploitability: how much a perfect opponent could win against this solution. Lower = closer to true GTO.">
-              Solved in {(solved.elapsedMs / 1000).toFixed(1)}s on {solved.threads} thread{solved.threads > 1 ? 's' : ''} · accuracy {solved.exploitPct.toFixed(2)}% of pot
-            </span>
-            <button className="btn btn-secondary btn-sm" onClick={backToSetup}>Edit hand</button>
+            {solved && (
+              <span className="az-solve-info" title="Exploitability: how much a perfect opponent could win against this solution. Lower = closer to true GTO.">
+                Solved in {(solved.elapsedMs / 1000).toFixed(1)}s on {solved.threads} thread{solved.threads > 1 ? 's' : ''} · accuracy {solved.exploitPct.toFixed(2)}% of pot
+              </span>
+            )}
+            <button className="btn btn-secondary btn-sm" onClick={backToSetup}>New hand</button>
           </>
         )}
       </header>
       <main className="az-body">
-        {(status === 'setup' || status === 'error') && <SetupPanel />}
-        {status === 'solving' && <SolvingView />}
-        {status === 'review' && <ReviewView />}
+        {tab === 'preflop' && <PreflopCharts />}
+        {tab === 'hands' && (status === 'setup' || status === 'error') && <SetupPanel />}
+        {tab === 'hands' && status === 'solving' && <SolvingView />}
+        {tab === 'hands' && status === 'review' && <ReviewView />}
       </main>
     </div>
   );

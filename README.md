@@ -44,6 +44,20 @@ Enter a hand you played and the analyzer solves it, then walks you through it st
    their range plays, and the side panel shows their range as a hand chart plus a breakdown
    ("30% overpairs, 15% draws …") — the hand-reading part. Click any step in the line to go back.
 
+**Preflop solver.** `solver/src/preflop.rs` solves 6-max, 100bb preflop (no rake and 5% rake
+with a 3bb cap). The solutions in `public/preflop/` power the *Preflop charts* tab, grade the
+preflop part of pasted hands, and supply the ranges for postflop solves. Simplifications: hands are
+grouped into the 169 classes; postflop is approximated by equity adjusted for position and
+playability; only the big blind flat-calls opens (others 3-bet or fold) so pots stay heads-up; fixed
+sizes (open 2.5bb / SB 3bb, 3-bet 3x IP / 4x from the blinds, 4-bet 2.3x, then all-in). Because
+postflop isn't played out, speculative hands (suited connectors, small pairs) come out a little
+tighter than in full solvers. Regenerate with:
+
+```bash
+cd solver && cargo run --release --features cli --bin preflop -- --out ../public/preflop/100bb.json
+cd solver && cargo run --release --features cli --bin preflop -- --rake 0.05 --cap 3 --out ../public/preflop/100bb-rake.json
+```
+
 **Speed.** Solves from the turn or river take seconds. Solves from the flop with wide ranges
 (e.g. BTN vs BB) take about a minute on an 8-core machine with the *Fast* preset; narrower ranges
 (3-bet pots) are quicker. More bet sizes multiply the time — see `solver/examples/bench.rs`

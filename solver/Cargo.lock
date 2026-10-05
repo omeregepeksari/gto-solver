@@ -172,6 +172,7 @@ name = "poker-royale-solver"
 version = "0.1.0"
 dependencies = [
  "postflop-solver",
+ "rayon",
  "wasm-bindgen",
  "wasm-bindgen-rayon",
 ]

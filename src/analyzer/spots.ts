@@ -5,7 +5,7 @@
 // postflop spot plays, but not a preflop solution. Every range can be edited in the UI.
 
 export type Position = 'UTG' | 'HJ' | 'CO' | 'BTN' | 'SB' | 'BB';
-export type PotType = 'srp' | '3bet';
+export type PotType = 'srp' | '3bet' | '4bet';
 
 export const POSITIONS: Position[] = ['UTG', 'HJ', 'CO', 'BTN', 'SB', 'BB'];
 const PREFLOP_ORDER: Position[] = POSITIONS;
@@ -85,6 +85,10 @@ export interface Spot {
   stack: number;
   /** One-line story of the preflop action, e.g. "BTN opens 2.5bb, BB calls". */
   story: string;
+  /** Where the ranges came from: the preflop solver, or the built-in charts as a fallback. */
+  source: 'solver' | 'charts';
+  /** Why the charts were used instead of the solver, if they were. */
+  sourceNote?: string;
 }
 
 export function buildSpot({ heroPos, villainPos, potType }: SpotSetup): Spot | string {
@@ -94,6 +98,7 @@ export function buildSpot({ heroPos, villainPos, potType }: SpotSetup): Spot | s
       ? [heroPos, villainPos]
       : [villainPos, heroPos];
   if (opener === 'BB') return 'The big blind can’t open.';
+  if (potType === '4bet') return '4-bet pots need the preflop solver, which is still loading.';
 
   const openSize = opener === 'SB' ? 3 : 2.5;
   const dead = (opener !== 'SB' && other !== 'SB' ? 0.5 : 0) + (other !== 'BB' ? 1 : 0);
@@ -129,6 +134,7 @@ export function buildSpot({ heroPos, villainPos, potType }: SpotSetup): Spot | s
     pot: Math.round((invested * 2 + dead) * BB),
     stack: Math.round((100 - invested) * BB),
     story,
+    source: 'charts',
   };
 }
 

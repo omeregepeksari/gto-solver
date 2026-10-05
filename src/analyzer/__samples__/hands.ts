@@ -64,3 +64,25 @@ Hero: bets ₮77.50 and is all-in
 btnreg: folds
 Uncalled bet (₮77.50) returned to Hero
 *** SUMMARY ***`;
+
+export const FOLD_TO_3BET = `CoinPoker Hand #4815162344: Hold'em No Limit (₮0.25/₮0.50) - 2026/10/04 21:30:00 UTC
+Table 'Mars' 6-max Seat #2 is the button
+Seat 1: bigblindguy (₮50.00 in chips)
+Seat 2: Hero (₮50.00 in chips)
+Seat 3: smallb (₮50.00 in chips)
+Seat 4: bbplayer (₮50.00 in chips)
+Seat 5: utgplayer (₮50.00 in chips)
+Seat 6: hjplayer (₮50.00 in chips)
+smallb: posts small blind ₮0.25
+bbplayer: posts big blind ₮0.50
+*** HOLE CARDS ***
+Dealt to Hero [Ac 9d]
+utgplayer: folds
+hjplayer: folds
+bigblindguy: folds
+Hero: raises ₮0.75 to ₮1.25
+smallb: raises ₮3.75 to ₮5.00
+bbplayer: folds
+Hero: folds
+Uncalled bet (₮3.75) returned to smallb
+*** SUMMARY ***`;

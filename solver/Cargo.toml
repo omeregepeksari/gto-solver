@@ -12,10 +12,17 @@ crate-type = ["cdylib", "rlib"]
 postflop-solver = { git = "https://github.com/b-inary/postflop-solver", default-features = false }
 wasm-bindgen = "0.2"
 wasm-bindgen-rayon = { version = "1", optional = true }
+rayon = { version = "1", optional = true }
 
 [features]
 # Multithreaded build (needs nightly + atomics; see package.json "wasm:mt").
 mt = ["postflop-solver/rayon", "dep:wasm-bindgen-rayon"]
+# Native preflop solver CLI (src/bin/preflop.rs).
+cli = ["dep:rayon"]
+
+[[bin]]
+name = "preflop"
+required-features = ["cli"]
 
 [profile.release]
 codegen-units = 1

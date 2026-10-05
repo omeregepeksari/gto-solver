@@ -109,6 +109,9 @@ export function SetupPanel() {
             <button className={st.potType === '3bet' ? 'on' : ''} onClick={() => editSpot({ potType: '3bet' })}>
               3-bet pot
             </button>
+            <button className={st.potType === '4bet' ? 'on' : ''} onClick={() => editSpot({ potType: '4bet' })}>
+              4-bet pot
+            </button>
           </div>
         </div>
         {typeof spot === 'string' ? (
@@ -119,6 +122,20 @@ export function SetupPanel() {
             <b>{spot.hero === 1 ? 'in position' : 'out of position'}</b>.
           </p>
         )}
+        {typeof spot !== 'string' && (
+          <p className="az-hint az-source">
+            {spot.source === 'solver'
+              ? '✓ Ranges come from the preflop solver.'
+              : `Ranges from a standard chart${spot.sourceNote ? ` — ${spot.sourceNote}` : '.'}`}
+          </p>
+        )}
+        <div className="az-row">
+          <span className="az-row-label">Rake</span>
+          <div className="seg">
+            <button className={st.rake === 'none' ? 'on' : ''} onClick={() => st.setRake('none')}>None</button>
+            <button className={st.rake === 'rake' ? 'on' : ''} onClick={() => st.setRake('rake')}>5% (3bb cap)</button>
+          </div>
+        </div>
       </section>
 
       <section className="az-section">
