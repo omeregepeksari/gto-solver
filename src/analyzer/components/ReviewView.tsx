@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAnalyzer, type Step } from '../analyzerStore';
 import {
   actionColors,
@@ -22,23 +22,48 @@ const STREET_NAME = ['', '', '', 'Flop', 'Turn', 'River'];
 const NEGLIGIBLE = 0.05 * BB;
 
 export function ReviewView() {
-  const { solved, steps, heroCards, villainPos, heroPos } = useAnalyzer();
+  const { solved, steps, cursor, setCursor, heroCards, villainPos, heroPos } = useAnalyzer();
   const [rangeTab, setRangeTab] = useState<'villain' | 'hero'>('villain');
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const c = useAnalyzer.getState().cursor;
+      if (e.key === 'ArrowLeft') setCursor(c - 1);
+      if (e.key === 'ArrowRight') setCursor(c + 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setCursor]);
+
   if (!solved || steps.length === 0) return null;
 
-  const step = steps[steps.length - 1];
+  const step = steps[Math.min(cursor, steps.length - 1)];
   const { node } = step;
   const hero = solved.spot.hero;
   const villain = 1 - hero;
   const h1 = heroCards[0]!;
   const h2 = heroCards[1]!;
-  const name = (p: number) => (p === hero ? 'You' : villainPos);
-  const prevStep = steps[steps.length - 2];
-  const justDecided = prevStep?.decision;
+  const prev = steps[cursor - 1];
+  // Right after a decision, keep its verdict on screen while showing what comes next.
+  const prevDecision = !step.decision && prev?.decision;
 
   return (
     <div className="az-review">
-      <Timeline steps={steps} hero={hero} villainName={villainPos} />
+      <HandSummary />
+      <div className="az-nav">
+        <button className="btn btn-secondary btn-sm" disabled={cursor === 0} onClick={() => setCursor(cursor - 1)}>
+          ← Back
+        </button>
+        <Timeline steps={steps} cursor={cursor} hero={hero} villainName={villainPos} />
+        <button
+          className="btn btn-secondary btn-sm"
+          disabled={cursor >= steps.length - 1}
+          onClick={() => setCursor(cursor + 1)}
+        >
+          Next →
+        </button>
+      </div>
 
       <div className="az-review-grid">
         <div className="az-main">
@@ -60,10 +85,12 @@ export function ReviewView() {
             </div>
           </div>
 
-          {justDecided && <DecisionFeedback d={justDecided} />}
+          {prevDecision && <DecisionFeedback d={prevDecision} />}
+          {step.decision && <DecisionFeedback d={step.decision} />}
+          {step.note && <p className="az-note">{step.note}</p>}
 
           {node.kind === 'action' && node.player === hero && <HeroDecision step={step} />}
-          {node.kind === 'action' && node.player === villain && <VillainDecision step={step} name={name(villain)} />}
+          {node.kind === 'action' && node.player === villain && <VillainDecision step={step} name={villainPos} />}
           {node.kind === 'chance' && <DealCard step={step} />}
           {node.kind === 'terminal' && <HandOver steps={steps} hero={hero} villainName={villainPos} />}
         </div>
@@ -84,8 +111,55 @@ export function ReviewView() {
   );
 }
 
-function Timeline({ steps, hero, villainName }: { steps: Step[]; hero: number; villainName: string }) {
-  const goTo = useAnalyzer(s => s.goTo);
+/** One-glance verdict for the whole hand, with a jump to the costliest decision. */
+function HandSummary() {
+  const { steps, setCursor, imported, replayStop } = useAnalyzer();
+  const decided = steps.map((s, i) => ({ d: s.decision, i })).filter((x): x is { d: Decision; i: number } => !!x.d);
+  if (decided.length === 0 && !imported) return null;
+
+  const good = decided.filter(x => GRADE_TEXT[x.d.grade].tone === 'good').length;
+  const bad = decided.filter(x => GRADE_TEXT[x.d.grade].tone === 'bad').length;
+  const ok = decided.length - good - bad;
+  const totalLoss = decided.reduce((a, x) => a + x.d.loss, 0);
+  const worst = decided.reduce<(typeof decided)[number] | null>((w, x) => (!w || x.d.loss > w.d.loss ? x : w), null);
+  const worstStreet = worst ? STREET_NAME[steps[worst.i].node.board.length] : '';
+
+  let verdict: string;
+  if (decided.length === 0) verdict = 'No decisions of yours to grade in this line.';
+  else if (totalLoss < NEGLIGIBLE * 2 && bad === 0) verdict = 'You played this hand like the solver. Nice.';
+  else if (bad === 0) verdict = `Solid — only small deviations (about ${bb(totalLoss)} total).`;
+  else verdict = `${bad} costly mistake${bad > 1 ? 's' : ''} — about ${bb(totalLoss)} given up vs the solver.`;
+
+  return (
+    <div className={`az-hand-summary ${bad ? 'fb-bad' : ok ? 'fb-ok' : 'fb-good'}`}>
+      <div className="hs-main">
+        <div>
+          <div className="hs-verdict">{verdict}</div>
+          <div className="hs-counts">
+            {imported?.story && <span>{imported.story}</span>}
+            {decided.length > 0 && (
+              <span>
+                {decided.length} decision{decided.length > 1 ? 's' : ''}: {good} good
+                {ok > 0 && `, ${ok} okay`}
+                {bad > 0 && `, ${bad} mistake${bad > 1 ? 's' : ''}`}
+              </span>
+            )}
+          </div>
+        </div>
+        {worst && worst.d.loss >= NEGLIGIBLE && (
+          <button className="btn btn-secondary btn-sm" onClick={() => setCursor(worst.i)}>
+            Biggest leak: {worstStreet.toLowerCase()} {worst.d.chosen.action.short.toLowerCase()} (−{bb(worst.d.loss)}) →
+          </button>
+        )}
+      </div>
+      {imported?.warnings.map(w => <p key={w} className="hs-warn">{w}</p>)}
+      {replayStop && <p className="hs-warn">Replay stopped: {replayStop} You can continue by hand from there.</p>}
+    </div>
+  );
+}
+
+function Timeline({ steps, cursor, hero, villainName }: { steps: Step[]; cursor: number; hero: number; villainName: string }) {
+  const setCursor = useAnalyzer(s => s.setCursor);
   const items: { key: string; label: string; stepIdx: number; cls: string }[] = [];
   steps.forEach((s, i) => {
     if (i === 0) {
@@ -93,7 +167,7 @@ function Timeline({ steps, hero, villainName }: { steps: Step[]; hero: number; v
     }
     if (s.chosen === undefined) return;
     if (s.node.kind === 'chance') {
-      items.push({ key: `c${i}`, label: `${STREET_NAME[s.node.board.length + 1]} ${cardLabel(s.chosen)}`, stepIdx: i, cls: 'tl-street' });
+      items.push({ key: `c${i}`, label: `${STREET_NAME[s.node.board.length + 1]} ${cardLabel(s.chosen)}`, stepIdx: i + 1, cls: 'tl-street' });
     } else if (s.node.kind === 'action') {
       const who = s.node.player === hero ? 'You' : villainName;
       const a = s.actions[s.chosen];
@@ -104,7 +178,11 @@ function Timeline({ steps, hero, villainName }: { steps: Step[]; hero: number; v
   return (
     <div className="az-timeline">
       {items.map((it, i) => (
-        <button key={it.key} className={`tl-item ${it.cls}`} onClick={() => goTo(it.stepIdx)} title="Go back to here">
+        <button
+          key={it.key}
+          className={`tl-item ${it.cls}${it.stepIdx === cursor ? ' tl-current' : ''}`}
+          onClick={() => setCursor(it.stepIdx)}
+        >
           {it.label}
           {i < items.length - 1 && <span className="tl-arrow">›</span>}
         </button>
@@ -119,7 +197,7 @@ function DecisionFeedback({ d }: { d: Decision }) {
   return (
     <div className={`az-feedback fb-${g.tone}`}>
       <div className="fb-title">
-        {g.tone === 'good' ? '✓' : g.tone === 'ok' ? '~' : '✗'} {d.chosen.action.label}: {g.title}
+        {g.tone === 'good' ? '✓' : g.tone === 'ok' ? '~' : '✗'} You: {d.chosen.action.label} · {g.title}
       </div>
       <div className="fb-body">
         {d.grade === 'best' && <>The solver does this {Math.round(d.chosen.freq * 100)}% of the time with your hand.</>}
@@ -141,6 +219,13 @@ function DecisionFeedback({ d }: { d: Decision }) {
   );
 }
 
+/** Label for the per-row button: what it means depends on whether this spot was already played. */
+function rowButton(step: Step, i: number, isHero: boolean): string | null {
+  if (step.chosen === undefined) return isHero ? 'I did this' : 'They did this';
+  if (step.chosen === i) return null;
+  return isHero ? 'Try this instead' : 'What if?';
+}
+
 function HeroDecision({ step }: { step: Step }) {
   const { solved, choose, busy } = useAnalyzer();
   const s = solved!;
@@ -160,7 +245,7 @@ function HeroDecision({ step }: { step: Step }) {
   return (
     <div className="az-panel">
       <div className="az-panel-head">
-        <h3>Your move</h3>
+        <h3>{step.chosen === undefined ? 'Your move' : 'Your decision here'}</h3>
         <EquityBadge equity={view.equity} percentile={view.equityPercentile} />
       </div>
       {!view.inRange && (
@@ -172,22 +257,32 @@ function HeroDecision({ step }: { step: Step }) {
       )}
       <p className="az-summary">{summary}</p>
       <div className="az-options">
-        {view.options.map((o, i) => (
-          <div key={o.action.code} className="az-option">
-            <span className="az-dot" style={{ background: colors[i] }} />
-            <span className="az-option-name">{o.action.label}</span>
-            <span className="az-bar">
-              <span style={{ width: `${o.freq * 100}%`, background: colors[i] }} />
-            </span>
-            <span className="az-freq">{Math.round(o.freq * 100)}%</span>
-            <span className={`az-ev ${o.evVsBest > -NEGLIGIBLE ? 'ev-best' : ''}`}>
-              {o.evVsBest > -NEGLIGIBLE ? 'best EV' : `−${bb(-o.evVsBest)}`}
-            </span>
-            <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => choose(i)}>
-              I did this
-            </button>
-          </div>
-        ))}
+        {view.options.map((o, i) => {
+          const label = rowButton(step, i, true);
+          return (
+            <div key={o.action.code} className={`az-option${step.chosen === i ? ' az-option-chosen' : ''}`}>
+              <span className="az-dot" style={{ background: colors[i] }} />
+              <span className="az-option-name">
+                {o.action.label}
+                {step.chosen === i && <em className="az-you">you</em>}
+              </span>
+              <span className="az-bar">
+                <span style={{ width: `${o.freq * 100}%`, background: colors[i] }} />
+              </span>
+              <span className="az-freq">{Math.round(o.freq * 100)}%</span>
+              <span className={`az-ev ${o.evVsBest > -NEGLIGIBLE ? 'ev-best' : ''}`}>
+                {o.evVsBest > -NEGLIGIBLE ? 'best EV' : `−${bb(-o.evVsBest)}`}
+              </span>
+              {label ? (
+                <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => choose(i)}>
+                  {label}
+                </button>
+              ) : (
+                <span />
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -215,28 +310,36 @@ function VillainDecision({ step, name }: { step: Step; name: string }) {
   return (
     <div className="az-panel">
       <div className="az-panel-head">
-        <h3>{name} to act — what did they do?</h3>
+        <h3>{step.chosen === undefined ? `${name} to act — what did they do?` : `${name}’s decision`}</h3>
       </div>
       <p className="az-summary">How {name} plays their whole range here (knowing you hold your cards):</p>
       <div className="az-options">
-        {step.actions.map((a, i) => (
-          <div key={a.code} className="az-option">
-            <span className="az-dot" style={{ background: colors[i] }} />
-            <span className="az-option-name">{a.label}</span>
-            <span className="az-bar">
-              <span style={{ width: `${freqs[i] * 100}%`, background: colors[i] }} />
-            </span>
-            <span className="az-freq">{Math.round(freqs[i] * 100)}%</span>
-            <span />
-            <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => choose(i)}>
-              They did this
-            </button>
-          </div>
-        ))}
+        {step.actions.map((a, i) => {
+          const label = rowButton(step, i, false);
+          return (
+            <div key={a.code} className={`az-option${step.chosen === i ? ' az-option-chosen' : ''}`}>
+              <span className="az-dot" style={{ background: colors[i] }} />
+              <span className="az-option-name">
+                {a.label}
+                {step.chosen === i && <em className="az-you">they did</em>}
+              </span>
+              <span className="az-bar">
+                <span style={{ width: `${freqs[i] * 100}%`, background: colors[i] }} />
+              </span>
+              <span className="az-freq">{Math.round(freqs[i] * 100)}%</span>
+              <span />
+              {label ? (
+                <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => choose(i)}>
+                  {label}
+                </button>
+              ) : (
+                <span />
+              )}
+            </div>
+          );
+        })}
       </div>
-      <p className="az-hint">
-        Didn’t see their exact size? Pick the closest one. See the table on the right for which hands take each line.
-      </p>
+      <p className="az-hint">The table on the right shows which hands take each line.</p>
     </div>
   );
 }
@@ -247,21 +350,24 @@ function DealCard({ step }: { step: Step }) {
   return (
     <div className="az-panel">
       <div className="az-panel-head">
-        <h3>Which {street.toLowerCase()} card came?</h3>
+        <h3>
+          {step.chosen === undefined
+            ? `Which ${street.toLowerCase()} card came?`
+            : `${street}: ${cardLabel(step.chosen)} — pick another card to see a different runout`}
+        </h3>
       </div>
       <CardGrid
         used={[...step.node.board, heroCards[0]!, heroCards[1]!]}
         allowed={step.node.possibleCards}
-        onPick={c => !busy && choose(c)}
+        onPick={c => !busy && c !== step.chosen && choose(c)}
       />
     </div>
   );
 }
 
 function HandOver({ steps, hero, villainName }: { steps: Step[]; hero: number; villainName: string }) {
-  const backToSetup = useAnalyzer(s => s.backToSetup);
-  const decisions = steps.filter(s => s.decision).map(s => s.decision!);
-  const totalLoss = decisions.reduce((a, d) => a + d.loss, 0);
+  const { backToSetup, setCursor } = useAnalyzer();
+  const decided = steps.map((s, i) => ({ d: s.decision, i })).filter((x): x is { d: Decision; i: number } => !!x.d);
   const last = steps[steps.length - 2];
   const lastAction = last?.actions[last.chosen ?? 0];
   return (
@@ -272,27 +378,20 @@ function HandOver({ steps, hero, villainName }: { steps: Step[]; hero: number; v
           {lastAction?.kind === 'fold' ? `${last.node.player === hero ? 'you' : villainName} folded` : 'showdown'}
         </h3>
       </div>
-      {decisions.length === 0 ? (
-        <p className="az-summary">You didn’t make any decisions in this line.</p>
-      ) : (
-        <>
-          <p className="az-summary">
-            You made {decisions.length} decision{decisions.length > 1 ? 's' : ''}.{' '}
-            {totalLoss < NEGLIGIBLE
-              ? 'All of them matched the solver. Nice.'
-              : `Total EV given up vs the solver: about ${bb(totalLoss)}.`}
-          </p>
-          <ul className="az-summary-list">
-            {decisions.map((d, i) => (
-              <li key={i} className={`fb-${GRADE_TEXT[d.grade].tone}`}>
-                <b>{d.chosen.action.label}</b> — {GRADE_TEXT[d.grade].title}
-                {d.loss >= NEGLIGIBLE && <> (−{bb(d.loss)})</>}
-              </li>
-            ))}
-          </ul>
-        </>
+      {decided.length > 0 && (
+        <ul className="az-summary-list">
+          {decided.map(({ d, i }) => (
+            <li key={i} className={`fb-${GRADE_TEXT[d.grade].tone}`}>
+              <button className="link" onClick={() => setCursor(i)}>
+                {STREET_NAME[steps[i].node.board.length]}: <b>{d.chosen.action.label}</b>
+              </button>{' '}
+              — {GRADE_TEXT[d.grade].title}
+              {d.loss >= NEGLIGIBLE && <> (−{bb(d.loss)})</>}
+            </li>
+          ))}
+        </ul>
       )}
-      <p className="az-hint">Click any step in the line above to go back and try a different action.</p>
+      <p className="az-hint">Use Back / Next (or ← →) to step through the hand, and “Try this instead” to explore other lines.</p>
       <button className="btn btn-secondary" onClick={backToSetup}>Analyze another hand</button>
     </div>
   );

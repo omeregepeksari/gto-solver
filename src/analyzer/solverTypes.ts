@@ -12,6 +12,8 @@ export interface SolveParams {
   maxIters: number;
   /** Offer all-in when the biggest bet is at most this many pots (0 = only when sizes reach it). */
   addAllinThreshold: number;
+  /** Actions actually played, as tree codes ("X,B18,C,…"), so their exact sizes are in the tree. */
+  line: string;
 }
 
 export interface NodeData {

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAnalyzer, PRESETS, type Preset, type Street } from '../analyzerStore';
+
+type AnalyzerState = ReturnType<typeof useAnalyzer.getState>;
 import { POSITIONS, BB, type Position, type Spot } from '../spots';
 import { RANK_CHARS, SUIT_CHARS, cardId, gridPos, handClass } from '../cards';
 import { comboKey, gridWeights, parseRange, rangeSize } from '../range';
@@ -35,6 +37,15 @@ export function SetupPanel() {
   const [quick, setQuick] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Editing the setup by hand means it no longer matches a pasted hand.
+  const edit = (patch: Partial<AnalyzerState>) => st.set({ ...patch, imported: null });
+  const editSpot = (patch: Partial<AnalyzerState>) =>
+    edit({
+      ...patch,
+      rangeOverride: [null, null],
+      ...(st.imported ? { potOverride: null, stackOverride: null } : {}),
+    });
+
   const slots: (number | null)[] = [st.heroCards[0], st.heroCards[1], ...Array.from({ length: 5 }, (_, i) => st.board[i] ?? null)];
   const used = slots.filter((c): c is number => c !== null);
   const spot = st.currentSpot();
@@ -43,13 +54,13 @@ export function SetupPanel() {
     if (slot < 2) {
       const h: [number | null, number | null] = [...st.heroCards];
       h[slot] = card;
-      st.set({ heroCards: h });
+      edit({ heroCards: h });
     } else {
       const b = [...st.board];
       const i = slot - 2;
       if (card === null) b.splice(i); // removing a board card removes the later streets too
       else if (i <= b.length) b[i] = card;
-      st.set({ board: b });
+      edit({ board: b });
     }
   };
 
@@ -64,7 +75,7 @@ export function SetupPanel() {
   const applyQuick = () => {
     const cards = parseCards(quick);
     if (!cards || cards.length < 2 || cards.length > 7) return;
-    st.set({ heroCards: [cards[0], cards[1]], board: cards.slice(2) });
+    edit({ heroCards: [cards[0], cards[1]], board: cards.slice(2) });
     setActiveSlot(Math.min(cards.length, 6));
     setQuick('');
   };
@@ -83,17 +94,19 @@ export function SetupPanel() {
 
   return (
     <div className="az-setup">
+      <PasteHand />
+      <div className="az-or">or set the hand up yourself</div>
       <section className="az-section">
         <h3><span className="az-num">1</span> Preflop</h3>
-        <PositionRow label="You" value={st.heroPos} onChange={p => st.set({ heroPos: p, rangeOverride: [null, null] })} />
-        <PositionRow label="Opponent" value={st.villainPos} onChange={p => st.set({ villainPos: p, rangeOverride: [null, null] })} />
+        <PositionRow label="You" value={st.heroPos} onChange={p => editSpot({ heroPos: p })} />
+        <PositionRow label="Opponent" value={st.villainPos} onChange={p => editSpot({ villainPos: p })} />
         <div className="az-row">
           <span className="az-row-label">Pot</span>
           <div className="seg">
-            <button className={st.potType === 'srp' ? 'on' : ''} onClick={() => st.set({ potType: 'srp', rangeOverride: [null, null] })}>
+            <button className={st.potType === 'srp' ? 'on' : ''} onClick={() => editSpot({ potType: 'srp' })}>
               Raised & called
             </button>
-            <button className={st.potType === '3bet' ? 'on' : ''} onClick={() => st.set({ potType: '3bet', rangeOverride: [null, null] })}>
+            <button className={st.potType === '3bet' ? 'on' : ''} onClick={() => editSpot({ potType: '3bet' })}>
               3-bet pot
             </button>
           </div>
@@ -307,5 +320,43 @@ function RangeEditor(props: {
       <textarea value={props.value} onChange={e => props.onChange(e.target.value)} rows={3} spellCheck={false} />
       {typeof parsed === 'string' && <span className="az-warn">{parsed}</span>}
     </div>
+  );
+}
+
+function PasteHand() {
+  const importHand = useAnalyzer(s => s.importHand);
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const analyze = (t: string) => {
+    if (!t.trim()) return;
+    setError(importHand(t));
+  };
+  return (
+    <section className="az-section az-paste">
+      <h3>Paste a hand from CoinPoker</h3>
+      <p className="az-hint">
+        Copy a hand’s text from CoinPoker’s hand history and paste it here — positions, cards, board, bet sizes and
+        your line fill in automatically, and every decision you made gets graded.
+      </p>
+      <textarea
+        rows={5}
+        spellCheck={false}
+        placeholder={'CoinPoker Hand #… Hold\'em No Limit (₮0.25/₮0.50)\n…\nDealt to Hero [As Qh]\n…'}
+        value={text}
+        onChange={e => setText(e.target.value)}
+        onPaste={e => {
+          const pasted = e.clipboardData.getData('text');
+          setText(pasted);
+          analyze(pasted);
+          e.preventDefault();
+        }}
+      />
+      <div className="az-paste-bar">
+        {error && <span className="az-warn">{error}</span>}
+        <button className="btn btn-primary" disabled={!text.trim()} onClick={() => analyze(text)}>
+          Analyze hand
+        </button>
+      </div>
+    </section>
   );
 }

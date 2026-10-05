@@ -11,6 +11,8 @@ import {
   type Decision,
 } from './analysis';
 import { cancelSolve, fetchNode, startSolve, stopSolve } from './solverClient';
+import { parseHandHistory, type ImportedHand, type LineAction } from './handHistory';
+import { matchAction } from './replay';
 import type { NodeData, SolveParams } from './solverTypes';
 
 export type Street = 'flop' | 'turn' | 'river';
@@ -55,6 +57,8 @@ export interface Step {
   chosen?: number;
   /** Grade for the hero's choice at this node. */
   decision?: Decision;
+  /** Set when an imported action had to be mapped to a different size. */
+  note?: string;
 }
 
 interface Solved {
@@ -81,6 +85,8 @@ interface AnalyzerStore {
   rangeOverride: [string | null, string | null];
   potOverride: number | null;
   stackOverride: number | null;
+  /** The pasted hand, when the analysis came from a hand history. */
+  imported: ImportedHand | null;
 
   // ---- solve / review (not persisted) ----
   status: 'setup' | 'solving' | 'review' | 'error';
@@ -88,20 +94,55 @@ interface AnalyzerStore {
   progress: { iteration: number; exploitPct: number; elapsedMs: number; target: number } | null;
   solved: Solved | null;
   steps: Step[];
-  history: number[];
+  /** Which step is on screen. Stepping back doesn't throw away later steps. */
+  cursor: number;
+  /** Why the automatic replay of an imported hand stopped early, if it did. */
+  replayStop: string | null;
   busy: boolean;
 
   set: (patch: Partial<AnalyzerStore>) => void;
   currentSpot: () => Spot | string;
   solve: () => void;
+  /** Parse a pasted hand history, fill in the setup and start solving. Returns an error message. */
+  importHand: (text: string) => string | null;
   stop: () => void;
   cancel: () => void;
   backToSetup: () => void;
+  /** Play `choice` at the step under the cursor (replacing anything after it). */
   choose: (choice: number) => Promise<void>;
-  goTo: (stepIdx: number) => Promise<void>;
+  setCursor: (stepIdx: number) => void;
 }
 
 const BOARD_LEN: Record<Street, number> = { flop: 3, turn: 4, river: 5 };
+
+/**
+ * Imported line → solver tree codes. Amounts are each player's chips in on the street; a bet
+ * that uses (almost) the whole stack becomes an all-in.
+ */
+function lineCodes(line: LineAction[], stack: number): string {
+  const codes: string[] = [];
+  let street = 0;
+  let before = 0; // chips each player put in on earlier streets
+  let streetMax = 0;
+  for (const a of line) {
+    if (a.street !== street) {
+      before += streetMax;
+      streetMax = 0;
+      street = a.street;
+    }
+    const cap = stack - before;
+    if (a.kind === 'check') codes.push('X');
+    else if (a.kind === 'fold') codes.push('F');
+    else if (a.kind === 'call') codes.push('C');
+    else {
+      const to = Math.min(a.toChips, cap);
+      codes.push(a.allIn || to >= cap - 1 ? `A${cap}` : `${a.kind === 'bet' ? 'B' : 'R'}${to}`);
+      streetMax = to;
+    }
+    if (a.kind === 'fold') break;
+  }
+  return codes.join(',');
+}
 
 function nextStep(node: NodeData, prev: Step | undefined): Step {
   const newStreet = !prev || node.board.length !== prev.node.board.length;
@@ -135,7 +176,39 @@ export const useAnalyzer = create<AnalyzerStore>()(
           }
           break;
         }
-        set({ history: h, steps: s });
+        set({ steps: s, cursor: s.length - 1 });
+      }
+
+      /** Play `choice` at step `idx`, dropping any steps after it. */
+      async function playAt(idx: number, choice: number, note?: string) {
+        const { steps, solved } = get();
+        const base = steps.slice(0, idx + 1);
+        const at = base[idx];
+        const updated: Step = { ...at, chosen: choice, decision: undefined, note };
+        if (solved && at.node.kind === 'action' && at.node.player === solved.spot.hero) {
+          const view = heroView(at.node, solved.spot.hero, solved.heroHandIdx, at.actions);
+          if (view?.options) updated.decision = gradeDecision(view.options, choice, at.node.pot);
+        }
+        const history = [...base.slice(0, -1).map(st => st.chosen!), choice];
+        await advance(history, [...base.slice(0, -1), updated]);
+      }
+
+      /** Walk the imported line through the solved tree, grading every decision on the way. */
+      async function replay(line: LineAction[]) {
+        const hero = get().solved!.spot.hero;
+        for (const la of line) {
+          const steps = get().steps;
+          const at = steps[steps.length - 1];
+          if (at.node.kind !== 'action') {
+            return set({ replayStop: `The solver’s tree ended before “${la.text}”.` });
+          }
+          if ((at.node.player === hero) !== (la.who === 'hero')) {
+            return set({ replayStop: `The hand went off the solver’s tree at “${la.text}”.` });
+          }
+          const m = matchAction(at.actions, la);
+          if ('error' in m) return set({ replayStop: m.error });
+          await playAt(steps.length - 1, m.index, m.note);
+        }
       }
 
       return {
@@ -149,13 +222,15 @@ export const useAnalyzer = create<AnalyzerStore>()(
         rangeOverride: [null, null],
         potOverride: null,
         stackOverride: null,
+        imported: null,
 
         status: 'setup',
         error: null,
         progress: null,
         solved: null,
         steps: [],
-        history: [],
+        cursor: 0,
+        replayStop: null,
         busy: false,
 
         set: patch => set(patch),
@@ -173,7 +248,7 @@ export const useAnalyzer = create<AnalyzerStore>()(
         },
 
         solve: () => {
-          const { heroCards, board, startStreet, preset } = get();
+          const { heroCards, board, startStreet, preset, imported } = get();
           const spot = get().currentSpot();
           if (typeof spot === 'string') return set({ status: 'error', error: spot });
           const [h1, h2] = heroCards;
@@ -201,6 +276,7 @@ export const useAnalyzer = create<AnalyzerStore>()(
             targetPct: p.targetPct,
             maxIters: 1000,
             addAllinThreshold: p.addAllinThreshold,
+            line: imported && startStreet === 'flop' ? lineCodes(imported.line, spot.stack) : '',
           };
 
           set({
@@ -209,7 +285,8 @@ export const useAnalyzer = create<AnalyzerStore>()(
             progress: { iteration: 0, exploitPct: Infinity, elapsedMs: 0, target: p.targetPct },
             solved: null,
             steps: [],
-            history: [],
+            cursor: 0,
+            replayStop: null,
           });
 
           startSolve(params, async msg => {
@@ -240,12 +317,37 @@ export const useAnalyzer = create<AnalyzerStore>()(
               });
               try {
                 await advance([], []);
+                if (imported && startStreet === 'flop') {
+                  await replay(imported.line);
+                  // Open on the first decision you made.
+                  const first = get().steps.findIndex(st => st.decision);
+                  set({ cursor: first >= 0 ? first : 0 });
+                }
                 set({ status: 'review' });
               } catch (e) {
                 set({ status: 'error', error: (e as Error).message });
               }
             }
           });
+        },
+
+        importHand: text => {
+          const hand = parseHandHistory(text);
+          if (typeof hand === 'string') return hand;
+          set({
+            imported: hand,
+            heroPos: hand.heroPos,
+            villainPos: hand.villainPos,
+            potType: hand.potType,
+            heroCards: hand.heroCards,
+            board: hand.board,
+            potOverride: hand.pot,
+            stackOverride: hand.stack,
+            rangeOverride: [null, null],
+            startStreet: 'flop',
+          });
+          get().solve();
+          return get().status === 'error' ? get().error : null;
         },
 
         stop: () => stopSolve(),
@@ -258,17 +360,11 @@ export const useAnalyzer = create<AnalyzerStore>()(
         backToSetup: () => set({ status: 'setup', error: null }),
 
         choose: async choice => {
-          const { steps, history, solved, busy } = get();
+          const { cursor, solved, busy } = get();
           if (busy || !solved) return;
-          const last = steps[steps.length - 1];
-          const updated: Step = { ...last, chosen: choice };
-          if (last.node.kind === 'action' && last.node.player === solved.spot.hero) {
-            const view = heroView(last.node, solved.spot.hero, solved.heroHandIdx, last.actions);
-            if (view?.options) updated.decision = gradeDecision(view.options, choice, last.node.pot);
-          }
-          set({ busy: true });
+          set({ busy: true, replayStop: null });
           try {
-            await advance([...history, choice], [...steps.slice(0, -1), updated]);
+            await playAt(cursor, choice);
           } catch (e) {
             set({ status: 'error', error: (e as Error).message });
           } finally {
@@ -276,21 +372,7 @@ export const useAnalyzer = create<AnalyzerStore>()(
           }
         },
 
-        goTo: async stepIdx => {
-          const { steps, busy } = get();
-          if (busy || stepIdx >= steps.length) return;
-          const kept = steps.slice(0, stepIdx + 1);
-          const target = { ...kept[stepIdx], chosen: undefined, decision: undefined };
-          // History = every choice made before this step.
-          const history = kept.slice(0, -1).map(s => s.chosen!);
-          set({ busy: true });
-          try {
-            await fetchNode(history); // re-sync the solver's current node
-            set({ steps: [...kept.slice(0, -1), target], history });
-          } finally {
-            set({ busy: false });
-          }
-        },
+        setCursor: idx => set({ cursor: Math.max(0, Math.min(idx, get().steps.length - 1)) }),
       };
     },
     {
@@ -306,6 +388,7 @@ export const useAnalyzer = create<AnalyzerStore>()(
         rangeOverride: s.rangeOverride,
         potOverride: s.potOverride,
         stackOverride: s.stackOverride,
+        imported: s.imported,
       }),
     },
   ),

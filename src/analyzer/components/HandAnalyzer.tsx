@@ -11,7 +11,7 @@ export function HandAnalyzer() {
   return (
     <div className="analyzer">
       <header className="az-header">
-        <button className="btn-back" onClick={() => setScreen('menu')}>← Menu</button>
+        <button className="btn-back" onClick={() => setScreen('menu')}>☰ Menu</button>
         <h2>Hand Analyzer</h2>
         {status === 'review' && solved && (
           <>

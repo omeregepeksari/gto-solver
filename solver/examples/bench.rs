@@ -9,7 +9,7 @@ fn run(name: &str, oop: &str, ip: &str, board: &str, pot: i32, stack: i32, sizes
 #[allow(clippy::too_many_arguments)]
 fn run_t(name: &str, oop: &str, ip: &str, board: &str, pot: i32, stack: i32, sizes: [&str; 6], target_pct: f32, allin: f64) {
     let t = Instant::now();
-    let mut s = Solver::new(oop, ip, board, pot, stack, sizes[0], sizes[1], sizes[2], sizes[3], sizes[4], sizes[5], allin).unwrap();
+    let mut s = Solver::new(oop, ip, board, pot, stack, sizes[0], sizes[1], sizes[2], sizes[3], sizes[4], sizes[5], allin, "").unwrap();
     let mem = s.memory_usage();
     s.allocate(true);
     let target = pot as f32 * target_pct / 100.0;

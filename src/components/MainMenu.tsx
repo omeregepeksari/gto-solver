@@ -20,11 +20,11 @@ export function MainMenu() {
         </div>
 
         <div className="menu-buttons">
-          <button className="btn btn-primary btn-large" onClick={() => setScreen('setup')}>
-            Play Offline
-          </button>
-          <button className="btn btn-secondary btn-large" onClick={() => setScreen('analyzer')}>
+          <button className="btn btn-primary btn-large" onClick={() => setScreen('analyzer')}>
             Hand Analyzer (GTO)
+          </button>
+          <button className="btn btn-secondary btn-large" onClick={() => setScreen('setup')}>
+            Play Offline
           </button>
           <button className="btn btn-secondary btn-large" onClick={() => setScreen('stats')}>
             Statistics

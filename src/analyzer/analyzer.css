@@ -304,3 +304,34 @@
 .az-mixbar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; min-width: 90px; background: var(--bg-dark); }
 .az-mixbar span { height: 100%; }
 .az-note-top { margin: 12px 0 0; }
+
+/* ---- Replayer ---- */
+.az-nav { display: flex; align-items: center; gap: 10px; }
+.az-nav .az-timeline { flex: 1; }
+.tl-current { box-shadow: 0 0 0 2px var(--gold); color: var(--text-primary); }
+.az-option-chosen { background: rgba(212, 168, 67, 0.1); box-shadow: inset 3px 0 0 var(--gold); }
+.az-you {
+  font-style: normal; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--gold-light); background: rgba(212, 168, 67, 0.15); padding: 2px 6px; border-radius: 4px; margin-left: 8px;
+}
+.az-hand-summary { border: 1px solid; border-radius: var(--radius); padding: 14px 16px; }
+.hs-main { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.hs-verdict { font-size: 16px; font-weight: 700; }
+.fb-good .hs-verdict { color: #4ade80; }
+.fb-ok .hs-verdict { color: #facc15; }
+.fb-bad .hs-verdict { color: #f87171; }
+.hs-counts { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+.hs-warn { font-size: 13px; color: var(--orange); margin-top: 8px; }
+.az-summary-list .link { padding: 0; color: var(--text-primary); }
+
+/* ---- Paste a hand ---- */
+.az-paste { border-color: rgba(212, 168, 67, 0.35); }
+.az-paste textarea {
+  width: 100%; background: var(--bg-dark); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-primary); font-family: ui-monospace, monospace; font-size: 12px; padding: 10px; resize: vertical;
+}
+.az-paste textarea:focus { outline: none; border-color: var(--gold); }
+.az-paste-bar { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 10px; }
+.az-or {
+  text-align: center; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px;
+}

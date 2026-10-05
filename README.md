@@ -31,7 +31,11 @@ Open http://localhost:5173 in your browser.
 
 Enter a hand you played and the analyzer solves it, then walks you through it street by street:
 
-1. **Setup** — your position, their position, single-raised or 3-bet pot, your cards and the board
+0. **Paste a hand** — copy a hand's text from CoinPoker's hand history (or any site using the
+   standard PokerStars-style format) and paste it. Positions, cards, board, the real pot, stacks
+   and bet sizes are filled in, the solve starts, and your line is replayed and graded
+   automatically. The exact bet sizes you and your opponent used are added to the solver's tree.
+1. **Setup (manual)** — your position, their position, single-raised or 3-bet pot, your cards and the board
    (click cards or type `AsKd Td9d6h`). Preflop ranges, pot and stacks come from simplified 6-max
    100bb charts; all of them are editable under *Advanced*.
 2. **Solve** — Discounted CFR runs in a Web Worker. Use *Good enough — show results* to stop early.

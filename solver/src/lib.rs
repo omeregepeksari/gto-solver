@@ -20,12 +20,44 @@ fn bet_sizes(bet: &str, raise: &str) -> Result<BetSizeOptions, String> {
     BetSizeOptions::try_from((bet, raise)).map_err(|e| format!("Bad bet sizes \"{bet}\" / \"{raise}\": {e}"))
 }
 
+fn decode_action(code: &str) -> Option<Action> {
+    let amount = || code.get(1..)?.parse().ok();
+    match code.chars().next()? {
+        'F' => Some(Action::Fold),
+        'X' => Some(Action::Check),
+        'C' => Some(Action::Call),
+        'B' => Some(Action::Bet(amount()?)),
+        'R' => Some(Action::Raise(amount()?)),
+        'A' => Some(Action::AllIn(amount()?)),
+        _ => None,
+    }
+}
+
+/// Adds every bet/raise of the played line that the tree doesn't already have. Stops at the
+/// first one the tree can't take (e.g. an amount below the minimum raise); the app then maps the
+/// rest of the line to the nearest available sizes.
+fn add_played_line(tree: &mut ActionTree, line: &str) {
+    let actions: Vec<Action> = line.split(',').filter(|s| !s.is_empty()).map_while(decode_action).collect();
+    for k in 1..=actions.len() {
+        let prefix = &actions[..k];
+        if matches!(prefix[k - 1], Action::Bet(_) | Action::Raise(_) | Action::AllIn(_)) {
+            if let Err(e) = tree.add_line(prefix) {
+                if !e.starts_with("Action already exists") {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 #[wasm_bindgen]
 impl Solver {
     /// `board` is 3–5 cards written together, e.g. "Td9d6h" or "Td9d6hQc".
     /// The tree starts on the street matching the number of board cards.
     /// `add_allin_threshold`: also offer all-in when the biggest bet is at most this many pots
     /// (0 = never add it; every extra action makes the tree much bigger).
+    /// `line`: the actions actually played (e.g. "X,B18,C,X,B55,R165,C"), so their exact sizes
+    /// exist in the tree. Empty for none.
     #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -41,6 +73,7 @@ impl Solver {
         river_bet: &str,
         river_raise: &str,
         add_allin_threshold: f64,
+        line: &str,
     ) -> Result<Solver, String> {
         let board = board.trim();
         if board.len() < 6 || board.len() > 10 || board.len() % 2 != 0 {
@@ -82,7 +115,8 @@ impl Solver {
             merging_threshold: 0.1,
         };
 
-        let action_tree = ActionTree::new(tree_config)?;
+        let mut action_tree = ActionTree::new(tree_config)?;
+        add_played_line(&mut action_tree, line);
         let game = PostFlopGame::with_config(card_config, action_tree)?;
         Ok(Solver { game, solved: false })
     }

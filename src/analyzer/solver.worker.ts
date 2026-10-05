@@ -67,6 +67,7 @@ async function runSolve(p: SolveParams, gen: number) {
     p.sizes.turn[0], p.sizes.turn[1],
     p.sizes.river[0], p.sizes.river[1],
     p.addAllinThreshold,
+    p.line,
   );
 
   const [mem, memCompressed] = s.memory_usage();

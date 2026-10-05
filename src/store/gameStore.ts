@@ -62,7 +62,7 @@ export const useGameStore = create<GameStore>()(
     (set, get) => ({
       gameState: createInitialGame(DEFAULT_SETTINGS),
       settings: DEFAULT_SETTINGS,
-      screen: 'menu',
+      screen: 'analyzer',
       stats: initialStats,
       handHistory: [],
       isProcessingAI: false,
