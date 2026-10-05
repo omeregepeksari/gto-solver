@@ -1,0 +1,30 @@
+{
+  "name": "poker-royale",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "wasm": "npm run wasm:st && npm run wasm:mt",
+    "wasm:st": "RUSTFLAGS='-C target-feature=+simd128' wasm-pack build solver --release --target web --out-dir pkg",
+    "wasm:mt": "RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128 -C link-arg=--shared-memory -C link-arg=--max-memory=4294967296 -C link-arg=--import-memory -C link-arg=--export=__wasm_init_tls -C link-arg=--export=__tls_size -C link-arg=--export=__tls_align -C link-arg=--export=__tls_base' rustup run ${RUST_NIGHTLY:-nightly} wasm-pack build solver --release --target web --out-dir ../public/solver-mt -- --features mt --target-dir solver/target-mt -Z build-std=panic_abort,std && node solver/patch-mt.mjs"
+  },
+  "dependencies": {
+    "framer-motion": "^12.42.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}

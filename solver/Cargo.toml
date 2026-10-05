@@ -1,0 +1,26 @@
+[package]
+name = "poker-royale-solver"
+version = "0.1.0"
+edition = "2021"
+# postflop-solver is AGPL-3.0-or-later, so this crate is too.
+license = "AGPL-3.0-or-later"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+postflop-solver = { git = "https://github.com/b-inary/postflop-solver", default-features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-rayon = { version = "1", optional = true }
+
+[features]
+# Multithreaded build (needs nightly + atomics; see package.json "wasm:mt").
+mt = ["postflop-solver/rayon", "dep:wasm-bindgen-rayon"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--enable-simd", "--enable-threads", "--enable-mutable-globals"]

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Poker Royale — Texas Hold'em</title>
+    <meta name="description" content="Premium Texas Hold'em poker with pro-level AI opponents" />
+    <script>
+      // Hosts like GitHub Pages can't send the isolation headers the multithreaded solver needs;
+      // a service worker adds them. Reload once after it first takes control.
+      if (!window.crossOriginIsolated && window.isSecureContext && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.register('coi-sw.js').then(reg => {
+          if (navigator.serviceWorker.controller || sessionStorage.getItem('coi-reloaded')) return;
+          sessionStorage.setItem('coi-reloaded', '1');
+          const reload = () => location.reload();
+          if (reg.active) reload();
+          else navigator.serviceWorker.addEventListener('controllerchange', reload);
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
